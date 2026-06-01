@@ -1,0 +1,9 @@
+# Secrets / local config — never commit
+.env
+
+# Build artifacts
+/omi-audio-streaming
+*.exe
+
+# Captured audio (in case anyone runs locally)
+/data/

@@ -1,0 +1,43 @@
+# Omi Audio Capture Webhook Receiver (CC-PROMPT-101).
+#
+# Standalone container on the existing `coolify` docker network. Traefik
+# (coolify-proxy) routes omi-audio.moxiemesh.com -> this container via the
+# dynamic config at /data/coolify/proxy/dynamic/omi-audio-moxiemesh.yaml.
+# TLS is terminated by Traefik (Let's Encrypt), so the app speaks plain HTTP.
+#
+# Host audio folder /opt/omi-audio/data is bind-mounted to /data in the
+# container. Files land at /data/{uid}/{YYYY-MM-DD}/{unix_ts_ms}.wav.
+#
+# Secrets live in .env on the VPS (NOT committed). Deploy by editing files in
+# /opt/omi-audio then `sudo docker compose up -d --build`.
+
+services:
+  omi-audio:
+    build: .
+    image: omi-audio:latest
+    container_name: omi-audio
+    restart: unless-stopped
+    networks:
+      - coolify
+    volumes:
+      - /opt/omi-audio/data:/data
+    environment:
+      - PORT=8080
+      - AUDIO_DIR=/data
+      - CAPTURE_TOKEN=${CAPTURE_TOKEN}
+      - OMI_ALLOWED_UIDS=${OMI_ALLOWED_UIDS:-}
+    # Run as a fixed non-root uid so files on the host bind mount are owned by
+    # 1000:1000 (omar), not root. Pre-chown /opt/omi-audio/data to 1000:1000.
+    user: "1000:1000"
+    healthcheck:
+      # alpine ships busybox wget. App binds 0.0.0.0 (IPv4); use 127.0.0.1
+      # explicitly to avoid the IPv6-only `localhost` resolution trap.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  coolify:
+    external: true
