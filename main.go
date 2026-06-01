@@ -118,9 +118,18 @@ func resolveSampleRate(param string) (int, bool) {
 	return v, true
 }
 
+// reject drains a bounded amount of the request body before writing the error
+// status, so a client that is still streaming its chunk receives a clean HTTP
+// status instead of a TCP connection reset. Omi chunks are ~hundreds of KB; the
+// 2 MB cap covers them with margin while bounding work done for rejected input.
+func reject(w http.ResponseWriter, r *http.Request, code int, msg string) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 2<<20))
+	http.Error(w, msg, code)
+}
+
 func handlePostAudio(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		reject(w, r, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -129,29 +138,29 @@ func handlePostAudio(w http.ResponseWriter, r *http.Request) {
 	// --- AUTH: shared secret in the URL (Omi only lets you set a URL). ---
 	// Reject before reading or writing anything. NEVER log the token.
 	if !tokenOK(query.Get("token")) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		log.Printf("rejected request: bad token (uid=%q)", query.Get("uid"))
+		reject(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	// --- uid validation + allow-list ---
 	uid := query.Get("uid")
 	if !uidPattern.MatchString(uid) {
-		http.Error(w, "invalid uid", http.StatusBadRequest)
 		log.Printf("rejected request: invalid uid=%q", uid)
+		reject(w, r, http.StatusBadRequest, "invalid uid")
 		return
 	}
 	if !uidAllowed(uid) {
-		http.Error(w, "forbidden uid", http.StatusForbidden)
 		log.Printf("rejected request: uid not in allow-list (uid=%q)", uid)
+		reject(w, r, http.StatusForbidden, "forbidden uid")
 		return
 	}
 
 	// --- sample_rate (drives the WAV header) ---
 	sampleRate, ok := resolveSampleRate(query.Get("sample_rate"))
 	if !ok {
-		http.Error(w, "invalid sample_rate", http.StatusBadRequest)
 		log.Printf("rejected request: invalid sample_rate=%q (uid=%q)", query.Get("sample_rate"), uid)
+		reject(w, r, http.StatusBadRequest, "invalid sample_rate")
 		return
 	}
 
