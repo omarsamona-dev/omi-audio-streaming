@@ -39,6 +39,25 @@ services:
       retries: 3
       start_period: 5s
 
+  # CC-PROMPT-104 — compaction sidecar. Compacts WAV -> Opus on a timed sweep
+  # (~10x smaller) and, when enabled, prunes old files. Runs separately from
+  # the receiver so an ffmpeg fault can never touch the verified webhook hot
+  # path. NOT on the `coolify` network (no public surface); it only shares the
+  # ./data volume. Receiver service above is byte-for-byte unchanged.
+  omi-audio-compactor:
+    build: ./compactor
+    container_name: omi-audio-compactor
+    restart: unless-stopped
+    user: "1001:1001"
+    volumes:
+      - /opt/omi-audio/data:/data
+    environment:
+      - DATA_DIR=/data
+      - OPUS_BITRATE=24k
+      - MIN_AGE_MIN=2
+      - SWEEP_INTERVAL_SEC=300
+      - RETENTION_DAYS=0
+
 networks:
   coolify:
     external: true

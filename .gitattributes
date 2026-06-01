@@ -1,0 +1,9 @@
+# Shell scripts and the Dockerfile MUST stay LF — CRLF breaks `#!/bin/sh`
+# (the kernel sees `/bin/sh\r` and fails with "no such file or directory")
+# and confuses Docker build parsing.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.go        text eol=lf
+*.md        text eol=lf
