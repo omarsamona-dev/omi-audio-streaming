@@ -1,0 +1,40 @@
+# CC-PROMPT-101 — Traefik routing for omi-audio.moxiemesh.com.
+#
+# Single backend (no replicas; not latency-sensitive). Routes the public
+# subdomain to the standalone `omi-audio` container on the `coolify` network.
+# TLS terminated here by Traefik via Let's Encrypt; the app speaks plain HTTP.
+# Active /healthz check drops the backend if it goes unhealthy.
+#
+# Installed at: /data/coolify/proxy/dynamic/omi-audio-moxiemesh.yaml
+# `redirect-https` middleware is defined in a sibling file (file provider,
+# global name) — same reference pattern as mcp-moxiemesh.yaml.
+
+http:
+  routers:
+    omi-audio-http:
+      rule: "Host(`omi-audio.moxiemesh.com`)"
+      entryPoints:
+        - http
+      service: omi-audio
+      middlewares:
+        - redirect-https
+
+    omi-audio-https:
+      rule: "Host(`omi-audio.moxiemesh.com`)"
+      entryPoints:
+        - https
+      service: omi-audio
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "omi-audio.moxiemesh.com"
+
+  services:
+    omi-audio:
+      loadBalancer:
+        servers:
+          - url: "http://omi-audio:8080"
+        healthCheck:
+          path: /healthz
+          interval: 10s
+          timeout: 3s
