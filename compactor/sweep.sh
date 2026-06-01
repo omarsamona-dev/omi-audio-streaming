@@ -13,7 +13,10 @@ find "$DATA_DIR" -type f -name '*.wav' -mmin +"$MIN_AGE_MIN" 2>/dev/null | while
   opus="${wav%.wav}.opus"
   [ -f "$opus" ] && continue
   tmp="${opus}.part"
-  if ffmpeg -nostdin -y -i "$wav" -c:a libopus -b:a "$OPUS_BITRATE" -ac 1 -ar 16000 "$tmp" 2>/dev/null; then
+  # -f opus is REQUIRED: the temp name ends in `.part`, so ffmpeg cannot infer
+  # the muxer from the extension and would fail with "Unable to choose an
+  # output format". Forcing the Ogg-Opus muxer makes the .part name irrelevant.
+  if ffmpeg -nostdin -y -i "$wav" -c:a libopus -b:a "$OPUS_BITRATE" -ac 1 -ar 16000 -f opus "$tmp" 2>/dev/null; then
     src=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$wav" 2>/dev/null || echo 0)
     out=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$tmp" 2>/dev/null || echo 0)
     if [ -s "$tmp" ] && awk -v a="$src" -v b="$out" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(a>0 && b>0 && d<=0.25)}'; then
