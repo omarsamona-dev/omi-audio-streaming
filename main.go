@@ -8,9 +8,20 @@ package main
 // the VPS. Transcription stays in the Omi app; pulling transcripts into
 // Moxie Mesh is a separate, later card.
 //
-// Omi posts:   POST {url}?token={SECRET}&sample_rate=16000&uid={uid}
-//              Content-Type: application/octet-stream
-//              Body: raw PCM16 mono bytes
+// Omi posts (TWO supported URL shapes):
+//
+//   1. Token in PATH (preferred — CC-PROMPT-127):
+//        Configure URL: {base}/audio/{SECRET}
+//        Omi appends:   POST {base}/audio/{SECRET}?sample_rate=16000&uid={uid}
+//      Omi prepends "?" to its appended params assuming your URL has no query
+//      string. If the token lives in the query (shape 2 below), that produces
+//      a SECOND "?" (/audio?token=X?sample_rate=...) and the token value gets
+//      corrupted. Putting the token in the path sidesteps the collision.
+//
+//   2. Token in QUERY (legacy / probe / non-Omi callers):
+//        POST {base}/audio?token={SECRET}&sample_rate=16000&uid={uid}
+//
+// Content-Type: application/octet-stream, Body: raw PCM16 mono bytes.
 //
 // Files land at: {AUDIO_DIR}/{uid}/{YYYY-MM-DD}/{unix_ts_ms}.wav  (UTC date)
 //
@@ -27,6 +38,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -36,6 +48,8 @@ const (
 	defaultSampleRate = 16000 // Omi CV1 default
 	minSampleRate     = 8000
 	maxSampleRate     = 192000
+
+	audioPathPrefix = "/audio/" // token-in-path route prefix
 )
 
 // uid is used as a path segment, so it must never contain a path separator or
@@ -87,6 +101,22 @@ func putUint16(b []byte, v uint16) {
 	b[1] = byte(v >> 8)
 }
 
+// suppliedToken returns the auth token from the request. If the path is under
+// /audio/ the token is the first path segment after the prefix (token-in-path,
+// Omi-safe). Otherwise it falls back to the ?token= query parameter (legacy).
+// A path-token route with an empty/sub-pathed segment yields "" which fails
+// the constant-time compare below — never a bypass.
+func suppliedToken(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, audioPathPrefix) {
+		seg := strings.TrimPrefix(r.URL.Path, audioPathPrefix)
+		if i := strings.IndexByte(seg, '/'); i >= 0 {
+			seg = seg[:i]
+		}
+		return seg
+	}
+	return r.URL.Query().Get("token")
+}
+
 // tokenOK does a constant-time comparison of the supplied token against the
 // configured secret. Length differences are handled by ConstantTimeCompare
 // (returns 0), so no early-exit timing leak on length.
@@ -135,9 +165,9 @@ func handlePostAudio(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query()
 
-	// --- AUTH: shared secret in the URL (Omi only lets you set a URL). ---
+	// --- AUTH: shared secret in the URL path (preferred) or query (legacy). ---
 	// Reject before reading or writing anything. NEVER log the token.
-	if !tokenOK(query.Get("token")) {
+	if !tokenOK(suppliedToken(r)) {
 		log.Printf("rejected request: bad token (uid=%q)", query.Get("uid"))
 		reject(w, r, http.StatusUnauthorized, "unauthorized")
 		return
@@ -292,7 +322,11 @@ func main() {
 		port = "8080"
 	}
 
+	// Both routes share one handler. "/audio/" (subtree) carries the token in
+	// the path (Omi-safe); "/audio" (exact) carries it in the query (legacy).
+	// Registering both avoids the ServeMux subtree-redirect on bare "/audio".
 	http.HandleFunc("/audio", handlePostAudio)
+	http.HandleFunc(audioPathPrefix, handlePostAudio)
 	http.HandleFunc("/healthz", handleHealthz)
 
 	log.Printf("omi-audio receiver starting on :%s (audio_dir=%s)", port, audioDir)
